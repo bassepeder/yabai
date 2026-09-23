@@ -1789,6 +1789,8 @@ static void handle_domain_space(FILE *rsp, struct token domain, char *message)
                     daemon_fail(rsp, "cannot focus space because mission-control is active.\n");
                 } else if (result == SPACE_OP_ERROR_SCRIPTING_ADDITION) {
                     daemon_fail(rsp, "cannot focus space due to an error with the scripting-addition.\n");
+                } else if (result == SPACE_OP_ERROR_GESTURE) {
+                    daemon_fail(rsp, "cannot focus space: could not construct the desktop-switching gesture.\n");
                 }
             }
         } else if (token_equals(command, COMMAND_SPACE_SWITCH)) {

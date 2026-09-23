@@ -928,6 +928,7 @@ bool space_manager_focus_space_using_gesture(uint32_t new_did, uint64_t new_sid)
 {
     int cur_index = space_manager_mission_control_index(display_space_id(new_did));
     int new_index = space_manager_mission_control_index(new_sid);
+    if (!cur_index || !new_index) return false;
 
     int count = abs(new_index - cur_index);
     if (count == 0) {
@@ -940,6 +941,11 @@ bool space_manager_focus_space_using_gesture(uint32_t new_did, uint64_t new_sid)
 
     bool focus_display = cur_did != new_did;
     if (focus_display) CGWarpMouseCursorPosition(point);
+
+    if (space_gesture_requires_payload()) {
+        if (!space_gesture_perform(new_index > cur_index ? 1 : -1, count)) return false;
+        goto focused;
+    }
 
     //
     // NOTE(asmvik): MacOS does not have an API that allows for space activation.
@@ -970,6 +976,7 @@ bool space_manager_focus_space_using_gesture(uint32_t new_did, uint64_t new_sid)
     }
     CFRelease(event_dock_control);
 
+focused:
     if (focus_display) {
         display_manager_set_active_display_id(new_did);
         if (space_manager_active_space() != new_sid) {
@@ -1002,7 +1009,7 @@ enum space_op_error space_manager_focus_space(uint64_t sid)
             display_manager_focus_display(new_did, sid);
         }
     } else {
-        space_manager_focus_space_using_gesture(new_did, sid);
+        if (!space_manager_focus_space_using_gesture(new_did, sid)) return SPACE_OP_ERROR_GESTURE;
     }
 
     return SPACE_OP_ERROR_SUCCESS;
