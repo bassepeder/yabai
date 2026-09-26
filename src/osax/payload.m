@@ -256,9 +256,12 @@ static bool verify_os_version(NSOperatingSystemVersion os_version)
         NSLog(@"[yabai-sa] Detected Tahoe Preview... flagging 'macOSSequoia=true.'");
         macOSSequoia = true;
         return true; // Tahoe preview
+    } else if (os_version.majorVersion == 27) {
+        macOSSequoia = true;
+        return true; // Golden Gate 27.0
     }
 
-    NSLog(@"[yabai-sa] spaces functionality is only supported on macOS Monterey 12.0.0+, and Ventura 13.0.0+, Sonoma 14.0.0+, and Sequoia 15.0");
+    NSLog(@"[yabai-sa] spaces functionality is only supported on macOS Monterey 12.0.0+, and Ventura 13.0.0+, Sonoma 14.0.0+, Sequoia 15.0, Tahoe 26.0 and Golden Gate 27.0");
 #endif
 
     return false;
@@ -557,6 +560,27 @@ static void do_space_create(char *message)
     });
 }
 
+static inline id current_space_for_display(CFStringRef display_uuid, uint64_t space_id)
+{
+    SEL selector = macOSSequoia ? @selector(currentSpaceForDisplayUUID:) : @selector(currentSpaceforDisplayUUID:);
+    if ([dock_spaces respondsToSelector:selector]) {
+        return ((id (*)(id, SEL, CFStringRef)) objc_msgSend)(dock_spaces, selector, display_uuid);
+    }
+
+    //
+    // NOTE: macOS 27.2 replaced currentSpaceForDisplayUUID: with currentSpaceForDisplay:,
+    // which takes a CGDirectDisplayID instead of the display uuid.
+    //
+
+    if ([dock_spaces respondsToSelector:@selector(displayForSPID:)] &&
+        [dock_spaces respondsToSelector:@selector(currentSpaceForDisplay:)]) {
+        uint32_t display_id = ((uint32_t (*)(id, SEL, uint64_t)) objc_msgSend)(dock_spaces, @selector(displayForSPID:), space_id);
+        return ((id (*)(id, SEL, uint32_t)) objc_msgSend)(dock_spaces, @selector(currentSpaceForDisplay:), display_id);
+    }
+
+    return nil;
+}
+
 static void do_space_focus(char *message)
 {
     if (dock_spaces == nil) return;
@@ -566,9 +590,7 @@ static void do_space_focus(char *message)
 
     if (dest_space_id) {
         CFStringRef dest_display = SLSCopyManagedDisplayForSpace(SLSMainConnectionID(), dest_space_id);
-        id source_space = macOSSequoia
-                        ? ((id (*)(id, SEL, CFStringRef)) objc_msgSend)(dock_spaces, @selector(currentSpaceForDisplayUUID:), dest_display)
-                        : ((id (*)(id, SEL, CFStringRef)) objc_msgSend)(dock_spaces, @selector(currentSpaceforDisplayUUID:), dest_display);
+        id source_space = current_space_for_display(dest_display, dest_space_id);
         uint64_t source_space_id = get_space_id(source_space);
 
         if (source_space_id != dest_space_id) {
