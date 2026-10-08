@@ -24,7 +24,7 @@ uint64_t get_dock_spaces_offset(NSOperatingSystemVersion os_version) {
 
 uint64_t get_dppm_offset(NSOperatingSystemVersion os_version) {
     if (os_version.majorVersion == 27) {
-        return 0;
+        return os_version.minorVersion < 2 ? 0x40000 : 0;
     } else if (os_version.majorVersion == 26) {
         return 0x70000;
     } else if (os_version.majorVersion == 15) {
@@ -96,7 +96,7 @@ uint64_t get_remove_space_offset(NSOperatingSystemVersion os_version) {
 
 uint64_t get_move_space_offset(NSOperatingSystemVersion os_version) {
     if (os_version.majorVersion == 27) {
-        return 0;
+        return os_version.minorVersion < 2 ? 0x120000 : 0;
     } else if (os_version.majorVersion == 26) {
         return 0x1c0000;
     } else if (os_version.majorVersion == 15) {
@@ -155,7 +155,8 @@ const char *get_dock_spaces_pattern(NSOperatingSystemVersion os_version) {
 const char *get_dppm_pattern(NSOperatingSystemVersion os_version) {
     if (os_version.majorVersion == 27) {
         // NOTE: DPDesktopPictureManager no longer exists as of macOS 27.2.
-        return NULL;
+        if (os_version.minorVersion >= 2) return NULL;
+        return "?? ?? 00 ?? 08 ?? ?? 91 00 01 40 F9 E2 03 16 AA E3 03 19 AA ?? ?? ?? 94";
     } else if (os_version.majorVersion == 26) {
         //Pulling from function 'DPRemoteConnection::_handleEvent:'
         return "?? ?? 00 ?? 08 ?? ?? 91 00 01 40 F9 E2 03 16 AA E3 03 19 AA ?? ?? ?? 94";
@@ -235,7 +236,8 @@ const char *get_remove_space_pattern(NSOperatingSystemVersion os_version) {
 
 const char *get_move_space_pattern(NSOperatingSystemVersion os_version) {
     if (os_version.majorVersion == 27) {
-        return NULL;
+        if (os_version.minorVersion >= 2) return NULL;
+        return "?? ?? ?? ?? E3 03 1E AA ?? ?? ?? 97 FE 03 03 AA FD 7B ?? A9 FD ?? ?? 91 F6 03 14 AA";
     } else if (os_version.majorVersion == 26) {
         return "7F 23 03 D5 E3 03 1E AA ?? ?? ?? 97 FE 03 03 AA FD 7B ?? A9 FD ?? ?? 91 F6 03 14 AA";
     } else if (os_version.majorVersion == 15) {
