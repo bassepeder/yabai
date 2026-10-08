@@ -134,6 +134,8 @@ if $SA; then
   step "Scripting addition"
   # Fresh Dock so the addition is injected once, via yabairc's dock_did_restart signal;
   # a stale Dock stops handling the native ctrl-N "Switch to Desktop" shortcuts.
+  # Other forks ship the same OSAX_VERSION, so --load-sa would keep their payload.
+  sudo "$BIN" --uninstall-sa
   killall Dock
   sleep 4
   grep -qs -- --load-sa "$HOME/.config/yabai/yabairc" "$HOME/.yabairc" || sudo "$BIN" --load-sa
