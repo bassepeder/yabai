@@ -29,6 +29,8 @@
 > ```sh
 > curl -fsSL https://raw.githubusercontent.com/bassepeder/yabai/macos27/scripts/install-fork.sh | bash
 > ```
+>
+> If spaces stop switching later, reload the scripting addition with `sudo yabai --uninstall-sa && killall Dock`.
 
 ## About
 
