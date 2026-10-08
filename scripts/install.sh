@@ -1,168 +1,99 @@
-#!/bin/bash
-# Builds bassepeder/yabai (upstream + community macOS 27 fixes), installs it
-# outside Homebrew, signs it with a stable self-signed cert so Accessibility/
-# Screen Recording grants survive rebuilds, loads the scripting addition when
-# SIP is disabled and checks that space switching actually works.
+#!/usr/bin/env sh
+
 #
-#   curl -fsSL https://raw.githubusercontent.com/bassepeder/yabai/macos27/scripts/install.sh | bash
+# This script will install the latest pre-built yabai release from GitHub.
+# Depends on curl, shasum, tar, cp, cut.
+#
+# ARG1:   Directory in which to store the yabai binary; must be an absolutepath.
+#         Fallback: /usr/local/bin
+#
+# ARG2:   Directory in which to store the yabai man-page; must be an absolutepath.
+#         Fallback: /usr/local/man/man1
+#
+# Author: Åsmund Vikane
+#   Date: 2024-02-13
+#
 
-set -euo pipefail
+BIN_DIR="$1"
+MAN_DIR="$2"
 
-REPO="https://github.com/bassepeder/yabai.git"
-BRANCH="macos27"
-SRC="$HOME/src/yabai"
-BIN="/opt/homebrew/bin/yabai"
-CERT="yabai-cert"
-SUDOERS="/private/etc/sudoers.d/yabai"
-ERR_LOG="/tmp/yabai_$USER.err.log"
-
-step() { printf '\n==> %s\n' "$*"; }
-die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
-
-[[ "$(uname -m)" == arm64 ]] || die "Apple Silicon only"
-SA=false
-if csrutil status | grep -q disabled; then
-  SA=true
-  nvram boot-args 2>/dev/null | grep -q -- -arm64e_preview_abi \
-    || die "run: sudo nvram boot-args=-arm64e_preview_abi, then reboot"
-fi
-xcode-select -p >/dev/null 2>&1 || die "run: xcode-select --install"
-command -v jq >/dev/null || brew install jq
-
-echo "macOS $(sw_vers -productVersion) ($(sw_vers -buildVersion)), scripting addition: $SA"
-sudo -v
-
-step "Code signing certificate"
-if ! security find-certificate -c "$CERT" >/dev/null 2>&1; then
-  tmp="$(mktemp -d)"
-  cat > "$tmp/cert.cnf" <<EOF
-[req]
-distinguished_name = dn
-x509_extensions = ext
-prompt = no
-[dn]
-CN = $CERT
-[ext]
-basicConstraints = critical,CA:false
-keyUsage = critical,digitalSignature
-extendedKeyUsage = critical,codeSigning
-EOF
-  /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config "$tmp/cert.cnf" \
-    -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null
-  /usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
-    -out "$tmp/cert.p12" -passout pass:yabai
-  security import "$tmp/cert.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P yabai -T /usr/bin/codesign
-  echo "macOS will ask for your password to trust the certificate for code signing."
-  security add-trusted-cert -r trustRoot -p codeSign -k "$HOME/Library/Keychains/login.keychain-db" "$tmp/cert.pem"
-  rm -rf "$tmp"
-fi
-echo "✓ $CERT"
-
-step "Source"
-if [[ -d "$SRC/.git" ]]; then
-  git -C "$SRC" remote set-url origin "$REPO"
-  git -C "$SRC" fetch -q origin
-  git -C "$SRC" checkout -q -B "$BRANCH" "origin/$BRANCH"
-else
-  git clone -q -b "$BRANCH" "$REPO" "$SRC"
-fi
-git -C "$SRC" log -1 --oneline
-
-step "Build"
-make -C "$SRC" clean >/dev/null 2>&1 || true
-make -C "$SRC" >/dev/null
-[[ -f "$SRC/bin/yabai" ]] || die "build produced no bin/yabai"
-
-step "Install"
-yabai --stop-service 2>/dev/null || true
-# A brew-managed yabai is upstream, which has no macOS 27 support; `brew upgrade`
-# would silently replace this build with it.
-if brew list yabai >/dev/null 2>&1; then
-  brew uninstall --ignore-dependencies yabai
-fi
-rm -f "$BIN"
-cp "$SRC/bin/yabai" "$BIN"
-chmod 755 "$BIN"
-if ! codesign -fs "$CERT" "$BIN"; then
-  echo "WARNING: signing with $CERT failed, falling back to ad-hoc (permissions will need re-granting after every rebuild)"
-  codesign -fs - "$BIN"
-fi
-"$BIN" --version
-
-if $SA; then
-  step "sudoers"
-  rule="$USER ALL=(root) NOPASSWD: sha256:$(shasum -a 256 "$BIN" | awk '{print $1}') $BIN --load-sa"
-  tmp="$(mktemp)"
-  echo "$rule" > "$tmp"
-  sudo visudo -cf "$tmp" >/dev/null || die "invalid sudoers rule: $rule"
-  sudo install -m 440 -o root -g wheel "$tmp" "$SUDOERS"
-  rm -f "$tmp"
-  echo "✓ $rule"
+if [ -z "$BIN_DIR" ]; then
+    BIN_DIR="/usr/local/bin"
 fi
 
-start_yabai() {
-  : > "$ERR_LOG"
-  "$BIN" --install-service >/dev/null 2>&1 || true
-  "$BIN" --restart-service >/dev/null 2>&1 || "$BIN" --start-service
-  for _ in $(seq 20); do
-    "$BIN" -m query --spaces >/dev/null 2>&1 && return 0
-    sleep 0.5
-  done
-  return 1
-}
-
-grant() {
-  echo
-  echo "yabai needs $1 permission."
-  echo "In the window that opens: remove any existing 'yabai' entry (–), then add $BIN (+) and enable it."
-  open "x-apple.systempreferences:com.apple.preference.security?Privacy_$2"
-  read -r -p "Press Enter when done... " < /dev/tty
-}
-
-step "Start yabai"
-until start_yabai; do
-  tccutil reset Accessibility com.asmvik.yabai >/dev/null 2>&1 || true
-  grant Accessibility Accessibility
-done
-if grep -q "Screen Recording" "$ERR_LOG"; then
-  grant "Screen Recording" ScreenCapture
-  start_yabai || die "yabai not responding after restart, see $ERR_LOG"
-fi
-echo "✓ yabai running"
-
-if $SA; then
-  step "Scripting addition"
-  # Fresh Dock so the addition is injected once, via yabairc's dock_did_restart signal;
-  # a stale Dock stops handling the native ctrl-N "Switch to Desktop" shortcuts.
-  killall Dock
-  sleep 4
-  grep -qs -- --load-sa "$HOME/.config/yabai/yabairc" "$HOME/.yabairc" || sudo "$BIN" --load-sa
+if [ -z "$MAN_DIR" ]; then
+    MAN_DIR="/usr/local/share/man/man1"
 fi
 
-step "Space switching test"
-cur="$("$BIN" -m query --spaces --space | jq .index)"
-other="$("$BIN" -m query --spaces --display | jq "[.[] | select(.index != $cur)][0].index // empty")"
-if [[ -z "$other" ]]; then
-  echo "only one space on this display, create another to test"
-else
-  "$BIN" -m space --focus "$other"
-  sleep 0.7
-  now="$("$BIN" -m query --spaces --space | jq .index)"
-  "$BIN" -m space --focus "$cur" || true
-  if [[ "$now" == "$other" ]]; then
-    echo "✓ space $cur -> $other -> $cur works"
-  else
-    echo "✗ space focus did not switch. The Dock patterns likely don't match this macOS build;"
-    echo "  see https://github.com/asmvik/yabai/issues/2832 (27.2) and #2802 (27.0)."
+if [ "${BIN_DIR%%/*}" ]; then
+    echo "Error: Binary target directory '${BIN_DIR}' is not an absolutepath."
     exit 1
-  fi
 fi
 
-if command -v skhd >/dev/null; then
-  step "skhd"
-  skhd --restart-service >/dev/null 2>&1 || skhd --start-service
-  echo "✓ skhd restarted"
+if [ ! -d "$BIN_DIR" ]; then
+    echo "Error: Binary target directory '${BIN_DIR}' does not exist."
+    exit 1
 fi
 
-echo
-echo "Done."
+if [ ! -w "$BIN_DIR" ]; then
+    echo "Error: User does not have write permission for binary target directory '${BIN_DIR}'."
+    exit 1
+fi
+
+if [ "${MAN_DIR%%/*}" ]; then
+    echo "Error: Man-page target directory '${MAN_DIR}' is not an absolutepath."
+    exit 1
+fi
+
+if [ ! -d "$MAN_DIR" ]; then
+    echo "Error: Man-page target directory '${MAN_DIR}' does not exist."
+    exit 1
+fi
+
+if [ ! -w "$MAN_DIR" ]; then
+    echo "Error: User does not have write permission for man-page target directory '${MAN_DIR}'."
+    exit 1
+fi
+
+AUTHOR="asmvik"
+NAME="yabai"
+VERSION="7.1.25"
+EXPECTED_HASH="76f383841570bfe1e3fd24cedd9b1a4b804b43b0f39c86a951c97d187fc6b1b4"
+TMP_DIR="./${AUTHOR}-${NAME}-v${VERSION}-installer"
+
+mkdir $TMP_DIR
+pushd $TMP_DIR
+
+curl --location --remote-name https://github.com/${AUTHOR}/${NAME}/releases/download/v${VERSION}/${NAME}-v${VERSION}.tar.gz
+FILE_HASH=$(shasum -a 256 ./${NAME}-v${VERSION}.tar.gz | cut -d " " -f 1)
+
+if [ "$FILE_HASH" = "$EXPECTED_HASH" ]; then
+    echo "Hash verified. Preparing files.."
+    tar -xzvf ${NAME}-v${VERSION}.tar.gz
+    rm ${BIN_DIR}/${NAME}
+    rm ${MAN_DIR}/${NAME}.1
+    cp -v ./archive/bin/${NAME} ${BIN_DIR}/${NAME}
+    cp -v ./archive/doc/${NAME}.1 ${MAN_DIR}/${NAME}.1
+    echo "Finished copying files.."
+    echo ""
+    echo "If you want yabai to be managed by launchd (start automatically upon login):"
+    echo "  yabai --start-service"
+    echo ""
+    echo "When running as a launchd service logs will be found in:"
+    echo "  /tmp/yabai_<user>.[out|err].log"
+    echo ""
+    echo "If you are using the scripting-addition; remember to update your sudoers file:"
+    echo "  sudo visudo -f /private/etc/sudoers.d/yabai"
+    echo ""
+    echo "Sudoers file configuration row:"
+    echo "  $(whoami) ALL=(root) NOPASSWD: sha256:$(shasum -a 256 ${BIN_DIR}/yabai | cut -d " " -f 1) ${BIN_DIR}/yabai --load-sa"
+    echo ""
+    echo "README: https://github.com/asmvik/yabai/wiki/Installing-yabai-(latest-release)#configure-scripting-addition"
+else
+    echo "Hash does not match the expected value.. abort."
+    echo "Expected hash: $EXPECTED_HASH"
+    echo "  Actual hash: $FILE_HASH"
+fi
+
+popd
+rm -rf $TMP_DIR
