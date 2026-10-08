@@ -23,6 +23,13 @@
   </a>
 </p>
 
+> [!IMPORTANT]
+> This fork adds macOS 27 support on top of upstream: scripting-addition offsets for 27.0 and 27.2 ([#2832](https://github.com/asmvik/yabai/issues/2832)) and space switching with SIP enabled ([#2822](https://github.com/asmvik/yabai/issues/2822)). To build and install it:
+>
+> ```sh
+> curl -fsSL https://raw.githubusercontent.com/bassepeder/yabai/macos27/scripts/install-fork.sh | bash
+> ```
+
 ## About
 
 <img align="right" width="40%" src="assets/screenshot.png" alt="Screenshot">
